@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <math.h>
 #include <assert.h>

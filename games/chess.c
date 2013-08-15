@@ -498,7 +498,7 @@ int can_capture(const GameState* state, int attacking_player, BoardMask defendin
       // do the valid moves of this piece intersect our defending pieces?
       if (defending & get_valid_moves(state, x, y, state->board[y][x]))
       {
-        DEBUG("Player %d can threaten piece @ 0x%llx with piece @ %d,%d\n", attacking_player, defending, x, y);
+        DEBUG("Player %d can threaten piece @ 0x%"PRIx64" with piece @ %d,%d\n", attacking_player, defending, x, y);
         //print_board(state);
         return index+1;
       }
@@ -531,7 +531,7 @@ int choose_destination(const void* pstate, ChoiceIndex pos)
     BoardMask capturemask = movemask & state->occupied[def.player^1];
     if (capturemask)
     {
-      DEBUG("Capture moves = %llx\n", capturemask);
+      DEBUG("Capture moves = %"PRIx64"\n", capturemask);
       if (ai_choice(pstate, 0, make_move, 0, capturemask))
         return 1;
       movemask &= ~capturemask;
@@ -540,7 +540,7 @@ int choose_destination(const void* pstate, ChoiceIndex pos)
     if (ai_get_mode() == AI_SEARCH && !state->incheck[0] && !state->incheck[1])
       return 1;
   }
-  DEBUG("@ %d,%d valid moves = %llx\n", x, y, movemask);
+  DEBUG("@ %d,%d valid moves = %"PRIx64"\n", x, y, movemask);
   return movemask ? ai_choice(pstate, 0, make_move, 0, movemask) : 0;
 }
 
@@ -550,7 +550,7 @@ int play_turn(const GameState* state)
   // reset en passant flag
   if (state->enpassant[player]) { SET(state->enpassant[player],0); }
   // look at all moves for all pieces
-  DEBUG("P%d occupied = %llx\n", player, state->occupied[player]);
+  DEBUG("P%d occupied = %"PRIx64"\n", player, state->occupied[player]);
   if (!ai_choice(state, 0, choose_destination, 0, state->occupied[player]))
   {
     // player cannot move, checkmate

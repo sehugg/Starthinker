@@ -342,7 +342,7 @@ void ai_update_console_stats()
       SearchStats stats = get_cumulative_search_stats();
       if (stats.visits == 0)
         return;
-      fprintf(stderr, "[Ply %2d, visited = %7lluk, %2d%% memoized, %2d%% cutoff, best = %9d]\r",
+      fprintf(stderr, "[Ply %2d, visited = %7"PRIu64"k, %2d%% memoized, %2d%% cutoff, best = %9d]\r",
         search_level,
         stats.visits/1000,
         (int)(stats.revisits*100/(stats.visits+stats.revisits)),

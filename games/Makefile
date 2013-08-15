@@ -2,7 +2,7 @@
 #export DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib
 
 #CC=gcc
-CFLAGS=-std=c99 -g -O3 -Werror -I../src/
+CFLAGS=-std=gnu99 -g -O3 -Werror -I../src/
 
 TARGETS=tictactoe reversi pig backgammon stratego chess fourup freecell go
 LIBS=../src/starthinker.a

@@ -49,7 +49,7 @@ BoardMask get_occupancy(const GameState* state)
 // s = bit index
 void set_piece_at(const GameState* state, int s, int player)
 {
-  DEBUG("player %d set %d (%llx)\n", player, s, state->pieces[player]);
+  DEBUG("player %d set %d (%"PRIx64")\n", player, s, state->pieces[player]);
   assert(!(get_occupancy(state) & (1ull<<s)));
   SET(state->pieces[player], state->pieces[player] | (1ull<<s));
 }

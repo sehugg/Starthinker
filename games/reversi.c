@@ -63,7 +63,7 @@ BoardMask get_occupancy(const GameState* state)
 // NOTE: 'state' is not const, so we can only use this with local copies of the state
 void set_piece_at(GameState* state, int s, int player)
 {
-  DEBUG("player %d set %d (%llx)\n", player, s, state->pieces[player]);
+  DEBUG("player %d set %d (%"PRIx64")\n", player, s, state->pieces[player]);
   BoardMask mask = (1ull<<s);
   for (int i=0; i<num_players; i++)
   {
