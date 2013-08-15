@@ -52,6 +52,7 @@ freecell: freecell.c $(LIBS) $(INCLUDES) cards.c cards.h
 	sample $* > $*.calltree
 	filtercalltree $*.calltree -invertCallTree | more
 
+# for testing with Chess EPD files
 %.epd.test: %.epd chess
 	time ./chess -s -d 16 -i 4 -- $*.epd | tee $*.epd.out
 

@@ -62,7 +62,6 @@ typedef struct {
   int score_incheck;
   int quiescence_level;
   int piece_values[NUM_PIECE_TYPES];
-  int piece_squares[BOARDY][BOARDX][NUM_PIECE_TYPES];
 } PlayerStrategy;
 
 static PlayerStrategy DEFAULT_STRATEGY = {
@@ -116,7 +115,6 @@ int get_piece_score(const PieceDef def, int xx, int yy)
     
   const PlayerStrategy* strategy = &player_strategies[def.player];
   int n = strategy->piece_values[def.type];
-  n += strategy->piece_squares[yy][xx][def.type];
   return n;
 }
 
@@ -209,74 +207,6 @@ void print_board(const GameState* state)
   }
   printf("\n     abcdefgh\n     01234567\n\n");
   fflush(stdout);
-}
-
-void reward(const GameState* state, PieceDef def, int x, int y, int value)
-{
-  player_strategies[def.player].piece_squares[y][x][def.type] += value;
-}
-
-void reward_all(const GameState* state, int player, int value)
-{
-  if (value == 0)
-    return;
-  for (int i=0; i<BOARDX*BOARDY; i++)
-  {
-    PieceDef def = state->board[0][i];
-    if (def.type)
-    {
-      player_strategies[def.player].piece_squares[0][i][def.type] += (def.player == player) ? value : -value;
-    }
-  }
-}
-
-void load_piece_square_values()
-{
-  FILE* f = fopen("chess.psv","rb");
-  if (!f || !fread(player_strategies, sizeof(player_strategies), 1, f))
-    fprintf(stderr, "Could not read chess.psv, using defaults\n");
-  printf("Read chess.psv\n");
-  fclose(f);
-  /*
-  // normalize
-  for (int p=0; p<2; p++)
-  {
-    for (int i=0; i<BOARDX*BOARDY*NUM_PIECE_TYPES; i++)
-    {
-      int* pv = &player_strategies[p].piece_squares[0][0][i];
-      if (*pv > 50) *pv = 50;
-      else if (*pv < -50) *pv = -50;
-    }
-  }
-  */
-}
-
-void save_piece_square_values()
-{
-  FILE* f = fopen("chess.psv","wb");
-  if (!f || !fwrite(player_strategies, sizeof(player_strategies), 1, f)) abort();
-  printf("Wrote chess.psv\n");
-  fclose(f);
-}
-
-void print_piece_square_values()
-{
-  for (PieceType type=0; type<NUM_PIECE_TYPES; type++)
-  {
-    for (int player=0; player<2; player++)
-    {
-      printf("Player %d, Piece Type %c:\n", player, CHARS_PER_TYPE[type]);
-      for (int y=0; y<BOARDY; y++)
-      {
-        for (int x=0; x<BOARDX; x++)
-        {
-          printf("%8d ", player_strategies[player].piece_squares[y][x][type]);
-        }
-        printf("\n");
-      }
-      printf("\n");
-    }
-  }
 }
 
 int move_src  = 0;
@@ -397,15 +327,6 @@ int make_move(const void* pstate, ChoiceIndex dest)
   {
     play_turn(state);
   } else {
-    // we are in play mode
-    // reward captures by updating piece-square table
-    if (piece2.type)
-    {
-      //int value = CANONICAL_PIECE_VALUES[piece2.type]; // value of captured piece
-      //reward_all(state, piece.player, 1);
-      reward(state, piece, x1, y1, 1);
-      reward(state, piece2, x2, y2, -1);
-    }
     // reset 50-move counter whenever we move a pawn, or when we capture
     if (piece2.type || piece.type == Pawn)
       num_turns_since_capture = 0;
@@ -636,19 +557,6 @@ int play_turn(const GameState* state)
     DEBUG("Player %d: no moves\n", player);
     ai_set_player_score(player^1, MAX_SCORE);
     ai_game_over();
-    // penalty for checkmated king, reward for non-checkmated king
-    if (!ai_is_searching())
-    {
-      /*
-      for (int p=0; p<num_players; p++)
-      {
-        I2XY(state->kingpos[p], kx, ky);
-        reward(state, state->board[ky][kx], kx, ky, p==player ? -10 : 10);
-      }
-      */
-      reward_all(state, player, -1);
-      reward_all(state, player^1, 1);
-    }
     return 0;
   } else
     return 1;
@@ -712,7 +620,6 @@ int main(int argc, char** argv)
   
   player_strategies[WHITE] = DEFAULT_STRATEGY;
   player_strategies[BLACK] = DEFAULT_STRATEGY;
-  load_piece_square_values();
 
   int argi = ai_process_args(argc,argv);
 
@@ -736,8 +643,6 @@ int main(int argc, char** argv)
   init_game(&state);
   play_game(&state);
   ai_print_endgame_results(&state);
-  print_piece_square_values();
-  save_piece_square_values();
   
   return 0;
 }

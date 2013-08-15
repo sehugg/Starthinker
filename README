@@ -1,6 +1,6 @@
 
-AI
-==
+Starthinker
+===========
 
 This is a library for analysis and automatic play of sequential turn-based
 games such as chess, go, poker, etc.
@@ -169,3 +169,47 @@ For example, your main loop might look like this:
 
 This loop plays a game turn with play_turn() until there's a draw or a
 player wins (assume player_won() returns -1 until someone wins).
+
+
+OPTIONS
+=======
+
+Each executable in games/ plays a game against itself, typically two-players
+(with the exception of the Freecell solver). Some common options:
+
+-v	Adds verbosity.
+-s	Print tree search stats.
+-d n	Sets max tree search depth to n.
+-H n	Sets memoization hash table size to 1<<n.
+-r n	Sets random seed to n.
+-i n	Sets iterative deepening depth increment (not yet working?)
+-F	Disables alpha/beta cutoff (full search).
+
+Note: When we say "search depth" we actually mean "choice depth". The number
+of choices per player turn depends on the game (i.e. for chess it's 2:
+source square and destination square). So to extend the search tree by 1 ply
+you need to add a depth of 2.
+
+
+TODO
+====
+
+* Address all //TODOs in the source code.
+* Look more critically at the search algorithm, esp. the integration of AB + Monte Carlo.
+* Better support for games with imperfect information (e.g. Stratego)
+* Iterative deepening
+* Interactive game play
+* Tests
+* More insightful game tree statistics
+* Don't convert to C++ (yet)
+* Complete rewrite by someone who actually knows what they're doing, or by myself
+
+
+DISCLAIMER
+==========
+
+This is an experimental proof-of-concept and should not be relied as part of
+a self-aware military supercomputer or anything that will monitor a crew on
+the way to Jupiter. In fact, it's probably not yet ready to be used in a real
+game.
+

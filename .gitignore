@@ -1,0 +1,12 @@
+**/*.o
+**/*.a
+**/*.dSYM
+games/backgammon
+games/chess
+games/fourup
+games/freecell
+games/go
+games/pig
+games/reversi
+games/stratego
+games/tictactoe
