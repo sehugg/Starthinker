@@ -1,0 +1,171 @@
+
+AI
+==
+
+This is a library for analysis and automatic play of sequential turn-based
+games such as chess, go, poker, etc.
+
+Goals:
+
+* Simple API
+* Backtracking (i.e. no need to make/unmake moves, just make)
+* Support games with chance and/or hidden information
+* Fast evaluation
+* Tunable settings
+* Repeatable play sessions (i.e. deterministic)
+* Supports analysis of game properties
+
+The AI engine currently uses a depth-first search with alpha-beta cutoff,
+transposition tables and an optional Monte Carlo search on the lowest nodes.
+
+To initialize the library:
+
+  AIEngineParams defaults = {};
+  defaults.num_players = 2;
+  defaults.max_search_level = 7;
+  ai_init(&defaults);
+
+This tells the library to initialize with two players and a max search depth
+of 7. This means the AI will search all moves up to 7 choices ahead. (We
+think in terms of choices, not moves, for reasons which we'll explain
+below).
+
+Your game should have a state object which encapsulates game state --
+whatever is used to represent playing pieces and derived data used to make
+decisions about the game. For example, tic-tac-toe might be represented like
+this:
+
+  typedef struct
+  {
+    int board[9]; // 3 x 3 = 9
+  } GameState;
+
+For clarity in this example, we represent the board as a one-dimensional
+array -- you can use bitmasks or whatever else you want.
+
+Note that the current player taking the turn and score for each player is
+not included the game state. These are built-in features of the library, so
+you can leave them out of your game state.
+
+In tic-tac-toe, there's only one choice a player can make during their turn:
+which space to place a piece. So we can define this in a make_move()
+function:
+
+  int make_move(const void* pstate, int index)
+  {
+    const GameState* state = pstate;
+
+    // put player's piece on board
+    int player = ai_current_player();
+    SET(state->board[index], player+1);
+
+    // did we win?
+    int winner = player_won(state);
+    if (winner >= 0)
+    {
+      ai_set_player_score(ai_current_player(), MAX_SCORE);
+      ai_game_over();
+      return 1;
+    }
+
+    // next player
+    if (ai_next_player())
+    {
+      play_turn(state);
+    }
+    return 1;
+  }
+
+This function is called a "choice function" and will be repeatedly called by
+the AI library.  Choice functions take two parameters: a state pointer and
+an integer parameter. Here the integer parameter indicates the position on
+the 3x3 board to make our move.
+
+Choice functions return a positive value if the move was successful, or zero
+if the move failed for some reason (returning failure is neccessary in some
+games where it's expensive to compute if the move will succeed beforehand,
+like in chess when going in and out of check).
+
+Note that the state object is passed as const. This is intentional;
+mutations to the state object must use the library's mutation macros.
+Instead of writing:
+
+    state->board[index] = player+1;
+
+We write:
+
+    SET(state->board[index], player+1);
+
+It's important to use the mutation macros because they support backtracking
+in the AI library.  Use SET for setting variables in your state object
+(the macro assumes this a pointer named 'state' in the calling function) and
+SETGLOBAL for setting variables outside of your state object.
+
+Most games have either scoring or winning conditions. Here we have written a
+function called player_won() which checks to see if anyone has won yet, and
+if so we call ai_set_player_score() to set the winning player's score to
+WINNING_SCORE (defined in the library). You can set a player's score at any
+time -- it acts as the evaluation function as well as the player score.
+
+The last thing the move function does is to pass control to the next player
+to take the next turn:
+
+    // next player
+    if (ai_next_player())
+    {
+      play_turn(state);
+    }
+
+The ai_next_player() function returns true while the AI library is searching
+for the best move, so in this case we want to call play_turn() to take the
+next turn. This causes the call tree to recurse and supports the depth-first
+search.
+
+Now that we have a function that implements a player's move, let's define
+play_turn() and call this function:
+
+  bool play_turn(const GameState* state)
+  {
+    BoardMask mask = get_unoccupied_squares();
+    if (mask == 0)
+      return false; // no squares left, draw
+    else
+      return ai_choice(state, sizeof(GameState), make_move, 0, mask) != 0;
+  }
+
+Here we have written a get_unoccupied_squares() function which identifies
+valid squares to make our next move.  If there are valid moves, we call the
+ai_choice() function which calls our move function. Here are the parameters:
+
+- a pointer to our state object
+- size of our state object (not always needed, but we'll explain why later)
+- our move function
+- the lower bound on the parameter passed to the move function
+- a 64-bit mask which indicates valid values to pass to the move function
+
+The ai_choice() function is the heart of the AI library. How it works
+depends on what mode the library is in:
+
+In Search mode, ai_choice() will call the move function multiple times,
+passing successive parameter values based on the lower bound and bitmask.
+This will generally recurse down the stack, playing the game, switching
+player turns and backtracking state as neccessary.
+
+Once the search completes with a valid move, we switch to Play mode. In this
+mode ai_choice() will call the move function only once with the parameter
+corresponding to the best move as discovered in its game tree search.
+
+Once you've defined these functions and initialized the startup state (in
+this case it would just be an empty board) you can define your main loop. 
+For example, your main loop might look like this:
+
+  void play_game(const GameState* state)
+  {
+    while (player_won(state) < 0 && play_turn(state))
+    {
+      print_board(state);
+    }
+  }
+
+This loop plays a game turn with play_turn() until there's a draw or a
+player wins (assume player_won() returns -1 until someone wins).
