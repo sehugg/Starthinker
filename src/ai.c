@@ -383,7 +383,7 @@ int ai_make_valid_random_move(const void* state, ChoiceFunction fn_move, int ran
     // move was not valid, so we remove that bit
     ChoiceMask bit = CHOICE(i);
     rangeflags ^= bit;
-    DEBUG("random move failed, new mask = %llx\n", rangeflags);
+    DEBUG("random move failed, new mask = %"PRIx64"\n", rangeflags);
     // roll back any modifications that were made
     rollback_journal(jtop);
   } while (rangeflags);
@@ -673,7 +673,7 @@ int ai_choice_ex(const void* state, int state_size, ChoiceFunction fn_move, int 
           choices = rangeflags & ~cutoffs;
           break;
       }
-      if (choices) { DEBUG("choice flags #%d = %d + %llx\n", j, index, choices); }
+      if (choices) { DEBUG("choice flags #%d = %d + %"PRIx64"\n", j, index, choices); }
       while (choices)
       {
         if (choices & 1)
@@ -1095,7 +1095,7 @@ void ai_print_stats()
     if (stats->visits)
     {
       int pi;
-      printf("Level %3d: %12llu %5.0f%% %5.0f%% %5.0f%% %6.1f %8d %8d ",
+      printf("Level %3d: %12"PRIu64" %5.0f%% %5.0f%% %5.0f%% %6.1f %8d %8d ",
         level,
         stats->visits,
         stats->revisits*100.0/(stats->revisits+stats->visits),
