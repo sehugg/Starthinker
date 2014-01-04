@@ -1,7 +1,7 @@
 
 #export DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib
 #CC=gcc
-CFLAGS=-std=gnu99 -g -O3 -Werror
+CFLAGS=-std=gnu99 -g -O4 -Werror
 
 SRCS=ai.c hash.c util.c journal.c
 OBJS=ai.o hash.o util.o journal.o

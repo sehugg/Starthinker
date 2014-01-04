@@ -12,10 +12,11 @@ int _ai_log(const char* fmt);
 extern int verbose;
 extern int debug_level;
 
+#define CANDEBUG (verbose && debug_level <= verbose-1)
 #define DEBUG(fmt, ...) \
-            do { if (verbose && debug_level <= verbose-1 && _ai_log(fmt)) { fprintf(stdout, fmt, __VA_ARGS__); } } while (0)
+            do { if (CANDEBUG && _ai_log(fmt)) { fprintf(stdout, fmt, __VA_ARGS__); } } while (0)
 #define DEBUG2(fmt, ...) \
-            do { if (verbose && debug_level <= verbose-1) { fprintf(stdout, fmt, __VA_ARGS__); } } while (0)
+            do { if (CANDEBUG) { fprintf(stdout, fmt, __VA_ARGS__); } } while (0)
 
 #define CHOICE(n) (((ChoiceMask)1)<<(n))
 #define MASK(n) (CHOICE(n)-1)

@@ -2,9 +2,9 @@
 #export DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib
 
 #CC=gcc
-CFLAGS=-std=gnu99 -g -O3 -Werror -I../src/
+CFLAGS=-std=gnu99 -g -O3 -Werror -ferror-limit=8 -I../src/
 
-TARGETS=tictactoe reversi pig backgammon stratego chess fourup freecell go
+TARGETS=tictactoe reversi pig backgammon stratego chess fourup freecell go jeweled rpg
 LIBS=../src/starthinker.a
 
 all: $(TARGETS)
@@ -40,6 +40,12 @@ go: go.c $(LIBS) $(INCLUDES)
 freecell: freecell.c $(LIBS) $(INCLUDES) cards.c cards.h
 	${CC} ${CFLAGS} -DNDEBUG -o $@ freecell.c $(LIBS) cards.c
 
+rpg: rpg.c $(LIBS) $(INCLUDES)
+	${CC} ${CFLAGS} -o $@ rpg.c $(LIBS)
+	
+jeweled: jeweled.c $(LIBS) $(INCLUDES)
+	${CC} ${CFLAGS} -o $@ jeweled.c $(LIBS)
+	
 %.gcc.s: %.c
 	gcc -S $(CFLAGS) $*.c
 	mv $*.s $*.gcc.s
