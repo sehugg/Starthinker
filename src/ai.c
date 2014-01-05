@@ -481,7 +481,9 @@ int ai_choice_ex(const void* state, int state_size, ChoiceFunction fn_move, int 
         ai_set_mode_play();
       }
       int res = fn_move(state, ai_next_choice(state, fn_move));
-      assert(res); // move must succeed or we did something wrong
+      // move must succeed or we did something wrong
+      // (this can happen if sim is not completely deterministic -- e.g. using random numbers)
+      assert(res); 
       return res;
     }
     

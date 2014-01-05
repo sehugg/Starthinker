@@ -32,13 +32,11 @@ typedef enum {
 #define NDIRS 4
 
 static char* GEM_TYPES = ".XO@*|=%";
-static int GEM_COLORS[8] = { COLOR_RED, COLOR_CYAN, COLOR_YELLOW, COLOR_GREEN, COLOR_BLUE, COLOR_MAGENTA, COLOR_BLACK, COLOR_BLACK };
+static int GEM_COLORS[8] = { COLOR_RED, 7, COLOR_YELLOW, COLOR_GREEN, COLOR_BLUE, COLOR_MAGENTA, COLOR_BLACK, COLOR_BLACK };
 
 #define BOARDX 9
 #define BOARDY 9
 #define PADDING 2
-
-typedef uint32_t RowMask;
 
 typedef struct
 {
@@ -48,19 +46,91 @@ typedef struct
 
 typedef struct
 {
+  uint64_t l,h;
+} BoardMask;
+
+typedef struct
+{
   Cell board[BOARDY+PADDING*2][16]; // padding on all sides, so coords are all 2-indexed
   uint8_t jelly[BOARDY][16];
-  int16_t cols[NCOLORS][BOARDX];
-  int16_t rows[NCOLORS][BOARDY];
+  BoardMask colormask[NCOLORS];
 } GameState;
 
+typedef struct
+{
+  BoardMask mask;
+  GemType type;
+} MatchTemplate;
+
 //
+
+#define NHORIZMASKS3 ((BOARDX-2)*BOARDY)
+#define NVERTMASKS3 ((BOARDY-2)*BOARDX)
+#define NMASKS3 (NHORIZMASKS3+NVERTMASKS3)
+
+static BoardMask MASKS3[NMASKS3];
+static BoardMask ADJACENT11;
 
 #define rnd(n) (((unsigned int)random()) % n)
 
 #define GEM_SCORE 1
 #define JELLY_SCORE 5
 #define STONE_SCORE 16
+
+static BoardMask bm_point(int x, int y)
+{
+  int n = x + y*BOARDX;
+  BoardMask bm;
+  if (n < 64)
+  {
+    bm.l = CHOICE(n);
+    bm.h = 0;
+  } else {
+    bm.l = 0;
+    bm.h = CHOICE((n-64));
+  }
+  return bm;
+}
+
+static BoardMask bm_or(const BoardMask a, const BoardMask b)
+{
+  BoardMask bm = { a.l|b.l, a.h|b.h };
+  return bm;
+}
+
+static BoardMask bm_and(const BoardMask a, const BoardMask b)
+{
+  BoardMask bm = { a.l&b.l, a.h&b.h };
+  return bm;
+}
+
+static BoardMask bm_not(const BoardMask a)
+{
+  BoardMask bm = { ~a.l, ~a.h };
+  return bm;
+}
+
+static bool bm_empty(const BoardMask a)
+{
+  return !a.l && !a.h;
+}
+
+static BoardMask bm_shl(const BoardMask a, int bits)
+{
+  BoardMask bm = { a.l<<bits, (a.h<<bits)|(a.l>>(64-bits)) };
+  return bm;
+}
+
+static BoardMask bm_shr(const BoardMask a, int bits)
+{
+  BoardMask bm = { a.l>>bits, (a.h>>bits)|(a.l<<(64-bits)) };
+  return bm;
+}
+
+static bool bm_equals(const BoardMask a, const BoardMask b)
+{
+  return a.l==b.l && a.h==b.h;
+}
 
 #define COORDFMT "%c%d"
 static char* COL_CHARS = " 123456789";
@@ -82,20 +152,18 @@ const void set_cell(const GameState* state, int x, int y, Cell c)
   const Cell* dst = get_cell(state, x, y);
   if (dst->color != GCNone)
   {
-    SET(state->cols[dst->color][x], state->cols[dst->color][x] & ~CHOICE(y));
-    SET(state->rows[dst->color][y], state->rows[dst->color][y] & ~CHOICE(x));
+    SET(state->colormask[dst->color], bm_and(state->colormask[dst->color], bm_not(bm_point(x,y))));
   }
   SET(*dst, c);
   if (c.color != GCNone)
   {
-    SET(state->cols[c.color][x], state->cols[c.color][x] | CHOICE(y));
-    SET(state->rows[c.color][y], state->rows[c.color][y] | CHOICE(x));
+    SET(state->colormask[c.color], bm_or(state->colormask[c.color], bm_point(x,y)));
   }
 }
 
 void print_board(const GameState* state)
 {
-  printf("\nBOARD:\n\n");
+  printf("\nBOARD (score %d):\n\n", ai_get_player_score(ai_current_player()));
   printf("    A  B  C  D  E  F  G  H  J\n\n");
   int x,y;
   for (y=0; y<=BOARDY-1; y++)
@@ -117,8 +185,7 @@ void print_board(const GameState* state)
         printf("  ");
       if (c.color != GCNone)
       {
-        assert(state->cols[c.color][x] & CHOICE(y));
-        assert(state->rows[c.color][y] & CHOICE(x));
+        assert(!bm_empty(bm_and(state->colormask[c.color], bm_point(x,y))));
       }
     }
     printf("\n");
@@ -129,91 +196,63 @@ void print_board(const GameState* state)
 static int move_row = -1;
 static int move_col = -1;
 
-void play_turn(const GameState* state);
+int play_turn(const GameState* state);
 
-int remove_stone(const GameState* state, int x0, int y0, int x1, int y1)
+int remove_stone(const GameState* state, int x, int y)
 {
   int score = 0;
-  for (int y=y0; y<=y1; y++)
+  Cell c = *get_cell(state, x, y);
+  if (c.type == STONE)
   {
-    for (int x=x0; x<=x1; x++)
+    c.type = BLANK;
+    SET(state->jelly[y][x], 2);
+    set_cell(state, x, y, c);
+    score += STONE_SCORE;
+    DEBUG("remove_stone(%d,%d): %d\n", x, y, score);
+  }
+  return score;
+}
+
+int remove_gem(const GameState* state, int x, int y)
+{
+  int score = GEM_SCORE;
+  int j = state->jelly[y][x];
+  if (j)
+  {
+    DEC(state->jelly[y][x]);
+    score += JELLY_SCORE;
+  }
+  Cell c = { };
+  set_cell(state, x, y, c);
+  score += remove_stone(state, x-1, y);
+  score += remove_stone(state, x+1, y);
+  score += remove_stone(state, x, y-1);
+  score += remove_stone(state, x, y+1);
+  return score;
+}
+
+int remove_gems(const GameState* state, BoardMask bm)
+{
+  DEBUG("remove gems (%llx %llx)\n", bm.h, bm.l);
+  int score = 0;
+  // TODO: faster
+  for (int y=0; y<BOARDY; y++)
+  {
+    for (int x=0; x<BOARDX; x++)
     {
-      Cell c = *get_cell(state, x, y);
-      if (c.type == STONE)
+      if (!bm_empty(bm_and(bm, bm_point(x,y))))
       {
-        c.type = BLANK;
-        SET(state->jelly[y][x], 2);
-        set_cell(state, x, y, c);
-        score += STONE_SCORE;
+        score += remove_gem(state,x,y);
       }
     }
   }
-  DEBUG("remove_stone(%d,%d - %d,%d): %d\n", x0, y0, x1, y1, score);
   return score;
 }
 
-int remove_gems(const GameState* state, int n, int x0, int y0, int dx, int dy)
-{
-  int x = x0;
-  int y = y0;
-  int score = n * GEM_SCORE;
-  DEBUG("remove %d gems (%d,%d) +(%d,%d)\n", n, x, y, dx, dy);
-  Cell c = { };
-  for (int i=0; i<n; i++)
-  {
-    int j = state->jelly[y][x];
-    if (j)
-    {
-      DEC(state->jelly[y][x]);
-      score += JELLY_SCORE;
-    }
-    set_cell(state, x, y, c);
-    x += dx;
-    y += dy;
-  }
-  // remove stone
-  if (dx)
-    score += remove_stone(state, x0-1, y0-1, x0+dx*n, y0+1);
-  else
-    score += remove_stone(state, x0-1, y0-1, x0+1, y0+dy*n);
-  return score;
-}
-
-int find_col_match(const GameState* state, int flags, int col, int n)
-{
-  int total = 0;
-  int mask = MASK(n);
-  for (int i=0; flags && i<BOARDX-n; i++)
-  {
-    if ((flags & mask) == mask)
-    {
-      DEBUG("found match %d @ %d,%d\n", n, col, i);
-      total += remove_gems(state, n, col, i, 0, 1);
-    }
-    flags >>= 1;
-  }
-  return total;
-}
-
-int find_row_match(const GameState* state, int flags, int row, int n)
-{
-  int total = 0;
-  int mask = MASK(n);
-  for (int i=0; flags && i<BOARDX-n; i++)
-  {
-    if ((flags & mask) == mask)
-    {
-      remove_gems(state, n, i, row, 1, 0);
-      total += n;
-    }
-    flags >>= 1;
-  }
-  return total;
-}
-
+// TODO: ai_chance
 Cell random_gem()
 {
-  return MAKECELL(PLAIN, rnd(6));
+  return MAKECELL(PLAIN, rnd(NREALCOLORS));
 }
 
 void move_gems_down(const GameState* state)
@@ -248,6 +287,24 @@ void move_gems_down(const GameState* state)
 
 int find_all_matches(const GameState* state);
 
+BoardMask find_color_matches(BoardMask cbm, BoardMask curmatch, int starti)
+{
+  DEBUG("looking at mask %llx %llx curmatch %llx %llx start %d\n", cbm.h, cbm.l, curmatch.h, curmatch.l, starti);
+  for (int i=starti; i<NMASKS3; i++)
+  {
+    BoardMask bm = bm_and(cbm, MASKS3[i]);
+    if (bm_equals(bm, MASKS3[i]))
+    {
+      DEBUG("  found mask index %d\n", i);
+      if (bm_empty(curmatch))
+        return find_color_matches(cbm, bm, i+1);
+      else if (!bm_empty(bm_and(curmatch, bm)))
+        return find_color_matches(cbm, bm_or(curmatch, bm), i+1);
+    }
+  }
+  return curmatch;
+}
+
 int find_matches(const GameState* state, int colorflags, int colflags, int rowflags)
 {
   assert(BOARDX==BOARDY);
@@ -257,42 +314,74 @@ int find_matches(const GameState* state, int colorflags, int colflags, int rowfl
   {
     if (CHOICE(color) & colorflags)
     {
-      // look for matches in each column
-      for (int i=0; i<BOARDX; i++)
+      // do we have a chance at 3 across?
+      BoardMask cbm = state->colormask[color];
+      bool found3 = false;
       {
-        //DEBUG("color %d index %d: col = %x, row = %x\n", color, i, state->cols[color][i], state->rows[color][i]);
-        for (int n=5; n>=3; n--)
+        BoardMask cbm1 = bm_shl(cbm, 1);
+        BoardMask cbm2 = bm_shl(cbm1, 1);
+        BoardMask combined = bm_and(cbm, bm_and(cbm1, cbm2));
+        DEBUG("color %d horiz: %llx %llx\n", color, combined.h, combined.l);
+        found3 |= !bm_empty(combined);
+      }
+      // what about 3 down?
+      if (!found3)
+      {
+        BoardMask cbm1 = bm_shl(cbm, BOARDX);
+        BoardMask cbm2 = bm_shl(cbm, BOARDX);
+        BoardMask combined = bm_and(cbm, bm_and(cbm1, cbm2));
+        DEBUG("color %d vert : %llx %llx\n", color, combined.h, combined.l);
+        found3 |= !bm_empty(combined);
+      }
+      if (found3)
+      {
+        BoardMask mask = {};
+        mask = find_color_matches(cbm, mask, 0);
+        if (!bm_empty(mask))
         {
-          if (CHOICE(i) & colflags)
-            total += find_col_match(state, state->cols[color][i], i, n);
-          if (CHOICE(i) & rowflags)
-            total += find_row_match(state, state->rows[color][i], i, n);
+          total += remove_gems(state, mask);
         }
       }
     }
   }
-  if (total)
-  {
-    SETGLOBAL(move_row,-1);
-    SETGLOBAL(move_col,-1);
-  }
+  if (!total)
+    return 0;
+    
+  SETGLOBAL(move_row,-1);
+  SETGLOBAL(move_col,-1);
+    
   while (total)
   {
-    ai_add_player_score(ai_current_player(), total);
-    if (!ai_is_searching()) print_board(state);
+    if (!ai_is_searching() && CANDEBUG) print_board(state);
     move_gems_down(state);
-    if (!ai_is_searching()) print_board(state);
+    if (!ai_is_searching() && CANDEBUG) print_board(state);
     int score = find_all_matches(state);
     if (!score)
       break;
     total += score;
   }
-  return total;
+  
+  ai_add_player_score(ai_current_player(), total);
+  if (ai_next_player())
+    return play_turn(state); // if in search mode
+  else
+    return 1;
 }
 
 int find_all_matches(const GameState* state)
 {
   return find_matches(state, MASK(NREALCOLORS), MASK(BOARDX), MASK(BOARDY));
+}
+
+bool has_adjacent_color(const GameState* state, int x, int y, GemColor color)
+{
+  BoardMask adjmask;
+  int i = x + y*BOARDX;
+  if (i < BOARDX+1)
+    adjmask = bm_shr(ADJACENT11, (BOARDX+1)-i);
+  else
+    adjmask = bm_shl(ADJACENT11, i-(BOARDX+1));
+  return !bm_empty(bm_and(state->colormask[color], adjmask));
 }
 
 static int DIR_X[4] = { 0, -1, 0, 1 };
@@ -306,7 +395,11 @@ int make_move(const void* pstate, ChoiceIndex dir)
   const Cell* src = get_cell(state, move_col, move_row);
   const Cell* dest = get_cell(state, dest_col, dest_row);
   // only swap two candies
-  if (IS_GEM(src->type) && IS_GEM(dest->type) && src->color != dest->color)
+  // TODO: special candies combinations
+  assert(IS_GEM(src->type));
+  if (IS_GEM(dest->type) && src->color != dest->color &&
+    (has_adjacent_color(state, dest_col, dest_row, src->color) || has_adjacent_color(state, move_col, move_row, dest->color))
+    )
   {
     DEBUG("swap %d,%d with %d,%d\n", move_col, move_row, dest_col, dest_row);
     Cell sc = *src;
@@ -342,13 +435,33 @@ int choose_row(const void* pstate, ChoiceIndex row)
     return 0;
 }
 
-void play_turn(const GameState* state)
+void shuffle_board(const GameState* state)
+{
+  for (int y=0; y<BOARDY; y++)
+  {
+    for (int x=0; x<BOARDX; x++)
+    {
+      Cell c = *get_cell(state, x, y);
+      if (HAS_COLOR(c.type))
+      {
+        c.color = rnd(NREALCOLORS);
+        set_cell(state, x, y, c);
+      }
+    }
+  }
+}
+
+int play_turn(const GameState* state)
 {
   if (!ai_choice(state, 0, choose_row, 0, RANGE(0,BOARDY)))
   {
     // TODO: shuffle
-    printf("Out of moves\n");
-  }
+    DEBUG("Out of moves, shuffling: %d\n", 0);
+    shuffle_board(state);
+    find_all_matches(state);
+    return play_turn(state);
+  } else
+    return 1;
 }
 
 void play_game(const GameState* state)
@@ -358,6 +471,30 @@ void play_game(const GameState* state)
     print_board(state);
     play_turn(state);
   }
+}
+
+void init_tables()
+{
+  int i = 0;
+  for (int y=0; y<BOARDY; y++)
+  {
+    for (int x=0; x<BOARDX-2; x++)
+    {
+      BoardMask horiz = bm_or(bm_point(x,y), bm_or(bm_point(x+1,y), bm_point(x+2,y)));
+      MASKS3[i++] = horiz;
+    }
+  }
+  for (int x=0; x<BOARDX; x++)
+  {
+    for (int y=0; y<BOARDY-2; y++)
+    {
+      BoardMask vert  = bm_or(bm_point(x,y), bm_or(bm_point(x,y+1), bm_point(x,y+2)));
+      //printf("#%d %d,%d: %llx %llx\n", i, x, y, vert.h, vert.l);
+      MASKS3[i++] = vert;
+    }
+  }
+  assert(i == NMASKS3);
+  ADJACENT11 = bm_or(bm_point(1,0), bm_or(bm_point(0,1), bm_or(bm_point(2,1), bm_point(1,2))));
 }
 
 void init_game(GameState* state, const char* fname)
@@ -385,7 +522,6 @@ void init_game(GameState* state, const char* fname)
       else
         c.color = GCNone;
       set_cell(state, x, y, c);
-      //printf("%d,%d c%d col %x row %x\n", x, y, c.color, state->cols[c.color][x], state->rows[c.color][y]);
     }
   }
   // find initial matches
@@ -399,12 +535,13 @@ int main(int argc, char** argv)
   int argi = ai_process_args(argc,argv);
 
   AIEngineParams defaults = {};
-  defaults.num_players = 2;
-  defaults.max_search_level = 10;
-  defaults.max_walk_level = BOARDX*BOARDY*2;
+  defaults.num_players = 1;
+  defaults.max_search_level = 3*1;
+  defaults.max_walk_level = BOARDX*BOARDY;
   ai_init(&defaults);
 
   GameState state;
+  init_tables();
   init_game(&state, "level23.txt");
   play_game(&state);
   ai_print_endgame_results(&state);
