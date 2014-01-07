@@ -64,6 +64,8 @@ typedef struct
 
 //
 
+bool deterministic = false;
+
 #define NHORIZMASKS3 ((BOARDX-2)*BOARDY)
 #define NVERTMASKS3 ((BOARDY-2)*BOARDX)
 #define NMASKS3 (NHORIZMASKS3+NVERTMASKS3)
@@ -74,8 +76,8 @@ static BoardMask ADJACENT11;
 #define rnd(n) (((unsigned int)random()) % n)
 
 #define GEM_SCORE 1
-#define JELLY_SCORE 5
-#define STONE_SCORE 16
+#define JELLY_SCORE 10
+#define STONE_SCORE 31
 
 static BoardMask bm_point(int x, int y)
 {
@@ -130,6 +132,22 @@ static BoardMask bm_shr(const BoardMask a, int bits)
 static bool bm_equals(const BoardMask a, const BoardMask b)
 {
   return a.l==b.l && a.h==b.h;
+}
+
+static int bitcount(uint64_t x)
+{
+  int n = 0;
+  while (x)
+  {
+    n += x&1;
+    x >>= 1;
+  }
+  return n;
+}
+
+static int bm_count(const BoardMask a)
+{
+  return bitcount(a.h) + bitcount(a.l);
 }
 
 #define COORDFMT "%c%d"
@@ -213,28 +231,77 @@ int remove_stone(const GameState* state, int x, int y)
   return score;
 }
 
+#define CLEAR_CELLS_WITH(fn) do { \
+  for (int cury=0; cury<BOARDY; cury++) { \
+    for (int curx=0; curx<BOARDX; curx++) { \
+      const Cell curcell = *get_cell(state, curx, cury); \
+      if (IS_GEM(curcell.type) && (fn)) { score += remove_gem(state, curx, cury); } \
+    } \
+  } \
+} while (0)
+
 int remove_gem(const GameState* state, int x, int y)
 {
   int score = GEM_SCORE;
+  // decrease jelly, if present
   int j = state->jelly[y][x];
   if (j)
   {
     DEC(state->jelly[y][x]);
     score += JELLY_SCORE;
   }
-  Cell c = { };
-  set_cell(state, x, y, c);
+  const Cell blankcell = { };
+  // blank out cell
+  Cell oldc = *get_cell(state, x, y);
+  set_cell(state, x, y, blankcell);
+  // remove adjacent stones
   score += remove_stone(state, x-1, y);
   score += remove_stone(state, x+1, y);
   score += remove_stone(state, x, y-1);
   score += remove_stone(state, x, y+1);
+  // special gem type? (may recurse)
+  if (oldc.type != PLAIN) DEBUG("removing special type %c @ %d,%d\n", GEM_TYPES[oldc.type], x, y);
+  switch (oldc.type)
+  {
+    case BOMB:
+      CLEAR_CELLS_WITH(curcell.color == oldc.color);
+      break;
+    case HSTRIPED:
+      CLEAR_CELLS_WITH(cury == y);
+      break;
+    case VSTRIPED:
+      CLEAR_CELLS_WITH(curx == x);
+      break;
+    case WRAPPED:
+      CLEAR_CELLS_WITH(abs(curx-x)<=1 && abs(cury-y)<=1);
+      break;
+    default:
+      break;
+  }
   return score;
 }
 
-int remove_gems(const GameState* state, BoardMask bm)
+int remove_gems(const GameState* state, BoardMask bm, GemColor color)
 {
-  DEBUG("remove gems (%llx %llx)\n", bm.h, bm.l);
+  int ngems = bm_count(bm);
+  GemType spectype = BLANK;
+  // 5 across?
+  if (ngems > 3)
+  {
+    bool hasvert = !bm_empty(bm_and(bm, bm_shr(bm, BOARDX)));
+    if (ngems >= 5 && hasvert)
+      spectype = WRAPPED;
+    else if (ngems >= 5)
+      spectype = BOMB;
+    else
+      spectype = hasvert ? VSTRIPED : HSTRIPED;
+  }
+  DEBUG("remove_gems: %d gems, adding %c (%llx %llx)\n", ngems, GEM_TYPES[spectype], bm.h, bm.l);
   int score = 0;
+  int px = -1;
+  int py = -1;
+  int fx = -1;
+  int fy = -1;
   // TODO: faster
   for (int y=0; y<BOARDY; y++)
   {
@@ -243,20 +310,52 @@ int remove_gems(const GameState* state, BoardMask bm)
       if (!bm_empty(bm_and(bm, bm_point(x,y))))
       {
         score += remove_gem(state,x,y);
+        if (x == move_col && y == move_row)
+        {
+          px = x;
+          py = y;
+        }
+        if (fx < 0)
+        {
+          fx = x;
+          fy = y;
+        }
       }
     }
   }
+  // add special gem
+  if (spectype != BLANK)
+  {
+    if (px < 0 && py < 0)
+    {
+      px = fx;
+      py = fy;
+    }
+    set_cell(state, px, py, MAKECELL(spectype, color));
+    DEBUG("added %c @ %d,%d\n", GEM_TYPES[spectype], px, py);
+  }
+  DEBUG("remove_gems: color %d, mask %llx %llx, score = %d\n", color, bm.h, bm.l, score);
   return score;
 }
 
 // TODO: ai_chance
 Cell random_gem()
 {
-  return MAKECELL(PLAIN, rnd(NREALCOLORS));
+  static GemColor nextcolor = 0;
+  
+  if (deterministic)
+  {
+    SETGLOBAL(nextcolor, (nextcolor+1) % NREALCOLORS);
+  } else {
+    nextcolor = rnd(NREALCOLORS);
+  }
+  
+  return MAKECELL(PLAIN, nextcolor);
 }
 
-void move_gems_down(const GameState* state)
+int move_gems_down(const GameState* state)
 {
+  int total = 0;
   for (int x=0; x<BOARDX; x++)
   {
     int srcy = BOARDY-1;
@@ -278,31 +377,51 @@ void move_gems_down(const GameState* state)
         Cell src = (srcy >= 0) ? *get_cell(state, x, srcy) : random_gem();
         //DEBUG("move %d->%d %d %d\n", srcy, desty, src.type, src.color);
         set_cell(state, x, desty, src);
+        total++;
       }
       desty--;
       srcy--;
     }
   }
+  DEBUG("move_gems_down: total %d\n", total);
+  return total;
 }
 
 int find_all_matches(const GameState* state);
 
-BoardMask find_color_matches(BoardMask cbm, BoardMask curmatch, int starti)
+BoardMask find_more_matches(BoardMask cbm, BoardMask curmatch, int starti)
 {
-  DEBUG("looking at mask %llx %llx curmatch %llx %llx start %d\n", cbm.h, cbm.l, curmatch.h, curmatch.l, starti);
+  assert(!bm_empty(curmatch));
+  DEBUG("find_more_matches: mask %llx %llx curmatch %llx %llx start %d\n", cbm.h, cbm.l, curmatch.h, curmatch.l, starti);
   for (int i=starti; i<NMASKS3; i++)
+  {
+    BoardMask bm = bm_and(cbm, MASKS3[i]);
+    if (bm_equals(bm, MASKS3[i]) && !bm_empty(bm_and(curmatch, bm)))
+    {
+      curmatch = bm_or(curmatch, bm);
+      DEBUG("  found mask index %d - bm %llx %llx\n", i, curmatch.h, curmatch.l);
+    }
+  }
+  return curmatch;
+}
+
+int find_color_matches(const GameState* state, BoardMask cbm, GemColor color)
+{
+  int score = 0;
+  DEBUG("find_color_matches: color %d mask %llx %llx\n", color, cbm.h, cbm.l);
+  for (int i=0; i<NMASKS3; i++)
   {
     BoardMask bm = bm_and(cbm, MASKS3[i]);
     if (bm_equals(bm, MASKS3[i]))
     {
-      DEBUG("  found mask index %d\n", i);
-      if (bm_empty(curmatch))
-        return find_color_matches(cbm, bm, i+1);
-      else if (!bm_empty(bm_and(curmatch, bm)))
-        return find_color_matches(cbm, bm_or(curmatch, bm), i+1);
+      BoardMask bm2 = find_more_matches(cbm, bm, i+1);
+      int n = bm_count(bm2);
+      score += remove_gems(state, bm2, color);
+      cbm = bm_and(cbm, bm_not(bm2));
     }
   }
-  return curmatch;
+  DEBUG("find_color_matches: score %d\n", score);
+  return score;
 }
 
 int find_matches(const GameState* state, int colorflags, int colflags, int rowflags)
@@ -335,22 +454,18 @@ int find_matches(const GameState* state, int colorflags, int colflags, int rowfl
       }
       if (found3)
       {
-        BoardMask mask = {};
-        mask = find_color_matches(cbm, mask, 0);
-        if (!bm_empty(mask))
-        {
-          total += remove_gems(state, mask);
-        }
+        total += find_color_matches(state, cbm, color);
       }
     }
   }
+  DEBUG("find matches, total = %d\n", total);
   if (!total)
     return 0;
     
   SETGLOBAL(move_row,-1);
   SETGLOBAL(move_col,-1);
     
-  while (total)
+  while (1)
   {
     if (!ai_is_searching() && CANDEBUG) print_board(state);
     move_gems_down(state);
@@ -358,14 +473,11 @@ int find_matches(const GameState* state, int colorflags, int colflags, int rowfl
     int score = find_all_matches(state);
     if (!score)
       break;
+    DEBUG("  score = %d\n", score);
     total += score;
   }
   
-  ai_add_player_score(ai_current_player(), total);
-  if (ai_next_player())
-    return play_turn(state); // if in search mode
-  else
-    return 1;
+  return total;
 }
 
 int find_all_matches(const GameState* state)
@@ -407,9 +519,17 @@ int make_move(const void* pstate, ChoiceIndex dir)
     set_cell(state, dest_col, dest_row, sc);
     set_cell(state, move_col, move_row, dc);
     // at least one match?
-    return find_matches(state, CHOICE(sc.color)|CHOICE(dc.color), CHOICE(move_col)|CHOICE(dest_col), CHOICE(move_row)|CHOICE(dest_row)) > 0;
-  } else
-    return 0;
+    int score = find_matches(state, CHOICE(sc.color)|CHOICE(dc.color), CHOICE(move_col)|CHOICE(dest_col), CHOICE(move_row)|CHOICE(dest_row));
+    if (score > 0)
+    {
+      ai_add_player_score(ai_current_player(), score);
+      if (ai_next_player())
+        return play_turn(state); // if in search mode
+      else
+        return 1;
+    }
+  }
+  return 0;
 }
 
 int choose_col(const void* pstate, ChoiceIndex col)
@@ -444,7 +564,7 @@ void shuffle_board(const GameState* state)
       Cell c = *get_cell(state, x, y);
       if (HAS_COLOR(c.type))
       {
-        c.color = rnd(NREALCOLORS);
+        c.color = rnd(NREALCOLORS); //TODO: random_gem().color;
         set_cell(state, x, y, c);
       }
     }
