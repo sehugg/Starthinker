@@ -15,6 +15,7 @@ typedef enum {
 
 #define IS_GEM(t) ((t) >= BOMB)
 #define HAS_COLOR(t) ((t) >= PLAIN)
+#define IS_SPECIAL(t) (IS_GEM(t) && (t) != PLAIN)
 
 typedef enum {
   GCRed,
@@ -54,6 +55,7 @@ typedef struct
   Cell board[BOARDY+PADDING*2][16]; // padding on all sides, so coords are all 2-indexed
   uint8_t jelly[BOARDY][16];
   BoardMask colormask[NCOLORS];
+  int goaljelly;
 } GameState;
 
 typedef struct
@@ -172,18 +174,25 @@ const void set_cell(const GameState* state, int x, int y, Cell c)
   {
     SET(state->colormask[dst->color], bm_and(state->colormask[dst->color], bm_not(bm_point(x,y))));
   }
+  
   SET(*dst, c);
+  
   if (c.color != GCNone)
   {
     SET(state->colormask[c.color], bm_or(state->colormask[c.color], bm_point(x,y)));
+  }
+  if (c.type == STONE)
+  {
+    SET(state->goaljelly, state->goaljelly+2);
   }
 }
 
 void print_board(const GameState* state)
 {
-  printf("\nBOARD (score %d):\n\n", ai_get_player_score(ai_current_player()));
+  printf("\nBOARD (score %d, jelly %d):\n\n", ai_get_player_score(ai_current_player()), state->goaljelly);
   printf("    A  B  C  D  E  F  G  H  J\n\n");
   int x,y;
+  int tj=0;
   for (y=0; y<=BOARDY-1; y++)
   {
     printf(" %2d ", y+1);
@@ -201,6 +210,8 @@ void print_board(const GameState* state)
         printf("%d ", state->jelly[y][x]);
       else
         printf("  ");
+      tj += state->jelly[y][x];
+      if (c.type == STONE) tj += 2;
       if (c.color != GCNone)
       {
         assert(!bm_empty(bm_and(state->colormask[c.color], bm_point(x,y))));
@@ -209,6 +220,7 @@ void print_board(const GameState* state)
     printf("\n");
   }
   printf("    A  B  C  D  E  F  G  H  J\n\n");
+  assert(tj == state->goaljelly);
 }
 
 static int move_row = -1;
@@ -231,6 +243,7 @@ int remove_stone(const GameState* state, int x, int y)
   return score;
 }
 
+// requires score:int by in scope
 #define CLEAR_CELLS_WITH(fn) do { \
   for (int cury=0; cury<BOARDY; cury++) { \
     for (int curx=0; curx<BOARDX; curx++) { \
@@ -248,6 +261,7 @@ int remove_gem(const GameState* state, int x, int y)
   if (j)
   {
     DEC(state->jelly[y][x]);
+    DEC(state->goaljelly);
     score += JELLY_SCORE;
   }
   const Cell blankcell = { };
@@ -363,6 +377,12 @@ int move_gems_down(const GameState* state)
     while (desty >= 0)
     {
       // skip blank cells
+      if (get_cell(state, x, desty)->type == STONE)
+      {
+        srcy--;
+        desty--;
+        continue;
+      }
       if (srcy >= 0)
       {
         const Cell* src = get_cell(state, x, srcy);
@@ -584,12 +604,31 @@ int play_turn(const GameState* state)
     return 1;
 }
 
+int grand_finale(const GameState* state)
+{
+  int score = 0;
+  CLEAR_CELLS_WITH(IS_SPECIAL(curcell.type));
+  if (score)
+  {
+    print_board(state);
+    move_gems_down(state);
+    score += find_all_matches(state);
+    ai_add_player_score(ai_current_player(), score);
+  }
+  return score;
+}
+
 void play_game(const GameState* state)
 {
-  while (true)
+  while (state->goaljelly) // TODO: fn
   {
     print_board(state);
     play_turn(state);
+  }
+  printf("\n*** GOAL REACHED\n");
+  while (grand_finale(state))
+  {
+    print_board(state);
   }
 }
 
